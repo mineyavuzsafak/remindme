@@ -499,7 +499,7 @@
                         </div>
                         <!-- Mobile hint will be added here -->
                         <div id="mobileHint" class="mobile-hint" style="display: none;">
-                            📱 Tap anywhere to enable voice responses on mobile
+                            📱 Tap anywhere on the screen to enable voice responses on mobile
                         </div>
                     </div>
                     
@@ -597,22 +597,54 @@
                     // Enable speech on any user interaction
                     const enableSpeech = () => {
                         if (!this.speechEnabled) {
-                            // Play silent utterance to wake up speech synthesis
-                            const utterance = new SpeechSynthesisUtterance('');
-                            utterance.volume = 0;
-                            this.synth.speak(utterance);
-                            this.speechEnabled = true;
+                            // Multiple attempts to wake up speech synthesis for mobile
+                            const enableAudio = () => {
+                                try {
+                                    // Create audio context to unlock audio
+                                    if (window.AudioContext || window.webkitAudioContext) {
+                                        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                                        audioContext.resume();
+                                    }
+                                    
+                                    // Play silent utterance to wake up speech synthesis
+                                    const utterance = new SpeechSynthesisUtterance(' ');
+                                    utterance.volume = 0.01; // Very low but not 0
+                                    utterance.rate = 10; // Fast so it finishes quickly
+                                    utterance.onend = () => {
+                                        this.speechEnabled = true;
+                                        console.log('Speech synthesis enabled for mobile');
+                                        // Hide mobile hint and show success message
+                                        document.getElementById('mobileHint').style.display = 'none';
+                                        this.showMessage('app', '🔊 Voice responses are now enabled! Try asking for a reminder.');
+                                    };
+                                    this.synth.speak(utterance);
+                                } catch (error) {
+                                    console.warn('Failed to enable speech synthesis:', error);
+                                    // Fallback - mark as enabled anyway
+                                    setTimeout(() => {
+                                        this.speechEnabled = true;
+                                        document.getElementById('mobileHint').style.display = 'none';
+                                    }, 500);
+                                }
+                            };
                             
-                            // Hide mobile hint
-                            document.getElementById('mobileHint').style.display = 'none';
-                            console.log('Speech synthesis enabled for mobile');
+                            // Immediate attempt
+                            enableAudio();
+                            
+                            // Delayed attempt for better compatibility
+                            setTimeout(enableAudio, 100);
                         }
                     };
                     
                     // Add event listeners for various interactions
                     document.addEventListener('touchstart', enableSpeech, { once: true });
                     document.addEventListener('click', enableSpeech, { once: true });
+                    document.addEventListener('touchend', enableSpeech, { once: true });
+                    this.micButton.addEventListener('touchstart', enableSpeech, { once: true });
                     this.micButton.addEventListener('click', enableSpeech, { once: true });
+                    
+                    // Also try to enable on window focus (when user returns to tab)
+                    window.addEventListener('focus', enableSpeech, { once: true });
                 }
             }
             
@@ -654,56 +686,111 @@
             initializeSpeechSynthesis() {
                 this.synth = window.speechSynthesis;
                 
+                // Load voices for better mobile compatibility
+                if ('speechSynthesis' in window) {
+                    const loadVoices = () => {
+                        const voices = this.synth.getVoices();
+                        console.log('Available voices:', voices.length);
+                        
+                        // Find the best English voice for mobile
+                        if (this.isMobile && voices.length > 0) {
+                            const preferredVoice = voices.find(voice => 
+                                voice.lang.includes('en') && voice.localService
+                            ) || voices.find(voice => voice.lang.includes('en'));
+                            
+                            if (preferredVoice) {
+                                console.log('Selected voice for mobile:', preferredVoice.name);
+                            }
+                        }
+                    };
+                    
+                    // Load voices
+                    loadVoices();
+                    this.synth.addEventListener('voiceschanged', loadVoices);
+                }
+                
                 // For desktop, enable speech immediately
                 if (!this.isMobile) {
                     this.speechEnabled = true;
+                } else {
+                    console.log('Mobile device detected, speech will be enabled after user interaction');
                 }
             }
             
             speak(text, callback = null) {
-                // Auto-enable speech for mobile if not already enabled
+                // Skip speech if not enabled on mobile
                 if (this.isMobile && !this.speechEnabled) {
-                    const utterance = new SpeechSynthesisUtterance('');
-                    utterance.volume = 0;
-                    this.synth.speak(utterance);
-                    this.speechEnabled = true;
+                    console.log('Speech not enabled on mobile yet, skipping:', text);
+                    if (callback) callback();
+                    return;
                 }
                 
                 // Cancel any ongoing speech
                 this.synth.cancel();
                 
-                const utterance = new SpeechSynthesisUtterance(text);
-                
-                // Mobile-optimized settings
-                if (this.isMobile) {
-                    utterance.rate = 0.9; // Slightly slower for mobile
-                    utterance.pitch = 1.1; // Higher pitch for mobile speakers
-                    utterance.volume = 1.0;
-                } else {
-                    utterance.rate = 1.1;
-                    utterance.pitch = 1;
-                    utterance.volume = 1.0;
-                }
-                
-                // Error handling
-                utterance.onerror = (event) => {
-                    console.error('Speech synthesis error:', event.error);
-                    if (callback) callback();
-                };
-                
-                utterance.onend = () => {
-                    if (callback) callback();
-                };
-                
-                // Add small delay for mobile browsers
+                // Wait a moment for cancel to take effect
                 setTimeout(() => {
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    
+                    // Mobile-optimized settings
+                    if (this.isMobile) {
+                        utterance.rate = 0.8; // Slower for better comprehension on mobile
+                        utterance.pitch = 1.0; // Normal pitch
+                        utterance.volume = 1.0;
+                        utterance.voice = this.synth.getVoices().find(voice => 
+                            voice.lang.includes('en') && voice.localService
+                        ) || null;
+                    } else {
+                        utterance.rate = 1.0;
+                        utterance.pitch = 1.0;
+                        utterance.volume = 1.0;
+                    }
+                    
+                    // Enhanced error handling
+                    utterance.onerror = (event) => {
+                        console.error('Speech synthesis error:', event.error);
+                        if (event.error === 'network' || event.error === 'synthesis-failed') {
+                            // Retry once on network/synthesis errors
+                            setTimeout(() => {
+                                try {
+                                    this.synth.speak(utterance);
+                                } catch (retryError) {
+                                    console.error('Speech retry failed:', retryError);
+                                    if (callback) callback();
+                                }
+                            }, 500);
+                        } else {
+                            if (callback) callback();
+                        }
+                    };
+                    
+                    utterance.onend = () => {
+                        if (callback) callback();
+                    };
+                    
+                    utterance.onstart = () => {
+                        console.log('Speech started:', text.substring(0, 50) + '...');
+                    };
+                    
+                    // Speak the utterance
                     try {
                         this.synth.speak(utterance);
+                        
+                        // Fallback timeout for mobile devices that sometimes don't fire onend
+                        if (this.isMobile) {
+                            const estimatedDuration = (text.length / 10) * 1000; // Rough estimate
+                            setTimeout(() => {
+                                if (this.synth.speaking) {
+                                    console.log('Speech timeout reached, forcing callback');
+                                    if (callback) callback();
+                                }
+                            }, Math.max(estimatedDuration, 3000));
+                        }
                     } catch (error) {
                         console.error('Failed to speak:', error);
                         if (callback) callback();
                     }
-                }, this.isMobile ? 100 : 0);
+                }, 50);
             }
             
             initializeSpeechRecognition() {
@@ -784,6 +871,7 @@
                     case 'waiting':
                         this.handleInitialInput(input);
                         break;
+                    case 'confirm_reminder':
                         this.handleConfirmation(input);
                         break;
                     case 'get_task':
