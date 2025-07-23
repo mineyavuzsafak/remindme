@@ -19,6 +19,12 @@ export default function HomeScreen() {
     let lowerText = text.toLowerCase().trim();
     let dateKeyword = null;
     let timeKeyword = null;
+    let task = '';
+
+    // Only parse if it starts with "remind me" - otherwise return empty task
+    if (!startsWithRemindMe(text)) {
+      return { task: '', time: null, date: null };
+    }
 
     // 1. Extract time patterns
     const timePatterns = [
@@ -56,7 +62,7 @@ export default function HomeScreen() {
     
     // 3. Clean up task text
     const keywordsToRemove = ['remind me to', 'remind me that', 'remind me'];
-    let task = lowerText.trim();
+    task = lowerText.trim();
     for (const keyword of keywordsToRemove) {
       if (task.startsWith(keyword)) {
         task = task.substring(keyword.length).trim();
@@ -209,7 +215,7 @@ export default function HomeScreen() {
               setConversationState('waiting_for_date');
               speak('When should I remind you?');
             }
-          } else if (task) {
+          } else if (task && task.length > 0) {
             // Only task provided
             temporaryReminder = { task };
             setConversationState('waiting_for_both');
@@ -353,6 +359,13 @@ export default function HomeScreen() {
     );
   };
 
+  const resetConversation = () => {
+    setConversationState('idle');
+    temporaryReminder = null;
+    setSpokenText('');
+    setError('');
+  };
+
   const getStatusText = () => {
     if (error) return 'An error occurred';
     if (isListening) {
@@ -402,7 +415,12 @@ export default function HomeScreen() {
       </View>
       
       <View style={styles.debugContainer}>
-        <Button title="Clear All Reminders" onPress={clearAllReminders} color="#ef4444" />
+        <View style={styles.buttonRow}>
+          <Button title="Clear All Reminders" onPress={clearAllReminders} color="#ef4444" />
+          <Button title="Reset Conversation" onPress={resetConversation} color="#f59e0b" />
+        </View>
+        <Text style={styles.debugText}>State: {conversationState}</Text>
+        {spokenText && <Text style={styles.debugText}>Last heard: "{spokenText}"</Text>}
       </View>
       
       <FlatList
@@ -473,6 +491,16 @@ const styles = StyleSheet.create({
   debugContainer: { 
     marginHorizontal: 20, 
     marginBottom: 10 
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  debugText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 12,
+    marginTop: 5,
   },
   listContent: { 
     paddingHorizontal: 20, 
